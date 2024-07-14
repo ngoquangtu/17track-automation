@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Track Shipments</title>
+</head>
+<body>
+    <h1>Track Shipments</h1>
+    <form action="/track" method="post">
+        <label for="tracking_numbers">Điền mã tracking:</label><br>
+        <textarea id="tracking_numbers" name="tracking_numbers" rows="4" cols="50"></textarea><br><br>
+        <input type="submit" value="Tracking Numbers">
+    </form>
+    <form action="/track-link" method="get">
+        <label for="tracking_link">Điền link tracking:</label><br>
+        <textarea id="tracking_link" name="tracking_link" rows="4" cols="50"></textarea><br><br>
+        <input type="submit" value="Tracking Link">
+    </form>
+</body>
+</html>
