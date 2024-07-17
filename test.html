@@ -20,8 +20,8 @@
         <div id="upload-section">
             <form id="upload-form">
                 <div class="form-group">
-                    <label for="file">Upload Excel File (Bắt buộc đúng định dạng )</label>
-                    <input type="file" class="form-control-file" id="file" required>
+                    <label for="file">Upload Excel File (Required)</label>
+                    <input type="file" class="form-control-file" id="file">
                 </div>
                 <button type="submit" class="btn btn-primary">Upload File</button>
             </form>
@@ -29,26 +29,17 @@
         <div id="track-section" style="display: none;">
             <form id="track-form">
                 <div class="form-group">
-                    <label for="tracking-numbers">Nhập dãy tracking numbers:</label>
-                    <textarea class="form-control" id="tracking-numbers" name="tracking_numbers" rows="10"></textarea>
+                    <label for="tracking-numbers">Enter Additional Tracking Numbers (one per line)</label>
+                    <textarea class="form-control" id="tracking-numbers" rows="10"></textarea>
                 </div>
                 <input type="hidden" id="file-id">
-                <button type="submit" class="btn btn-success">Track</button>
+                <button type="submit" class="btn btn-success">Track Shipments</button>
             </form>
         </div>
         <div id="download-section" style="display: none;">
-            <a id="download-link" class="btn btn-info"  href="#" onclick="downloadResults()">Download Results</a>
+            <a id="download-link" class="btn btn-info">Download Results</a>
         </div>
         <div id="message" class="mt-3"></div>
-        <div>
-            Hướng dẫn: <br>
-            B1:Tải file excel để chứa các thông tin thu được <br>
-            B2: Nhập dãy tracking numbers(khuyến cáo nên nhập nhỏ hơn 80 số tránh lỗi,hoặc tràn bộ nhớ máy) <br>
-            B3: Đợi trình duyệt mở trang 17track.net <br>
-            B4: Nếu có mã captcha hãy nhập mã captcha(nhập nhanh tránh bị out time) <br>
-            B5:Đợi thông báo trả về thành công <br>
-            B6: Download File hoặc nhập tiếp mã 
-        </div>
     </div>
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script>
@@ -73,7 +64,7 @@
                                 $('#file-id').val(response.file_id);
                                 $('#upload-section').hide();
                                 $('#track-section').show();
-                                $('#message').html('<div class="alert alert-success">File đã được tải lên thành công.Bây giờ bạn có thể nhập tracking numbers.</div>');
+                                $('#message').html('<div class="alert alert-success">File uploaded successfully. You can now track shipments.</div>');
                             } else {
                                 $('#message').html('<div class="alert alert-danger">' + response.message + '</div>');
                             }
@@ -87,7 +78,7 @@
             $('#track-form').on('submit', function(e) {
                 e.preventDefault();
                 let file_id = $('#file-id').val();
-                let trackingNumbers = $('#tracking-numbers').val();
+                let trackingNumbers = $('#tracking-numbers').val().trim();
                 $('#message').html('')
                 $('#download-section').hide();  // Hide download section
 
@@ -111,10 +102,6 @@
                 }
             });
         });
-        function downloadResults() {
-            let file_id = $('#file-id').val();
-            window.location.href = '/download/' + file_id;
-        }
     </script>
 </body>
 </html>
