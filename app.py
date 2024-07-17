@@ -142,4 +142,4 @@ def download_results(file_id):
     return send_file(output_file_path, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+     app.run(host='0.0.0.0', port=5000, debug=True)
