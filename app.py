@@ -31,7 +31,10 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
 
     try:
         search_box = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, 'auto-size-textarea')))
+
+        tracking_numbers = [str(num) for num in tracking_numbers if pd.notna(num)]
         tracking_numbers_str = ','.join(tracking_numbers)
+        
         search_box.send_keys(tracking_numbers_str)
         track_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.batch_track_search-area__9BaOs')))
         track_button.click()
@@ -55,20 +58,20 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
                 final_status_at = row.find_element(By.CSS_SELECTOR, '.yqcr-last-event-pc time').text.strip()
                 status = row.find_element(By.CSS_SELECTOR, '.text-capitalize span').text.strip()
 
-                trn_block = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "trn-block"))
-                )
-
+                trn_block = row.find_element(By.CLASS_NAME, "trn-block")
                 html_content = trn_block.get_attribute('outerHTML')
                 soup = BeautifulSoup(html_content, 'html.parser')
                 time_tags = soup.select('.trn-block dd time')
 
-                last_second_time_content = time_tags[-2].get_text() if len(time_tags) > 1 else 'N/A'
+                if len(time_tags) > 1:
+                    last_second_time_content = time_tags[-2].get_text()
+                else:
+                    last_second_time_content = 'N/A'
                 status_parts = status.split('(')
                 delivery_status = status_parts[0].strip()
                 days_in_transit = status_parts[1].replace(')', '').strip() if len(status_parts) > 1 else 'N/A'
 
-                data.append([tracking_number, final_status_at, delivery_status, days_in_transit, last_second_time_content])
+                data.append([tracking_number,delivery_status,last_second_time_content, final_status_at,  days_in_transit])
             except Exception as e:
                 print(f"Error processing row: {str(e)}")
 
@@ -96,18 +99,17 @@ def upload_file():
 @app.route('/track', methods=['POST'])
 def track_shipments():
     file_id = request.form.get('file_id')
-    tracking_numbers = request.form.get('tracking_numbers')
 
-    if not file_id and not tracking_numbers:
-        return jsonify({"status": "error", "message": "No file or tracking numbers provided"}), 400
-    if not tracking_numbers:
-        return jsonify({'status': 'error', 'message': 'Tracking numbers are required'})
     if file_id:
         file_path = os.path.join(UPLOAD_FOLDER, file_id + '.xlsx')
+        df = pd.read_excel(file_path)
+        tracking_numbers = df['Tracking'].tolist()
+
     else:
         file_path = None
 
-    len_track_numbers = tracking_numbers.strip().split('\n')
+    # len_track_numbers = tracking_numbers.strip().split('\n')
+    len_track_numbers = tracking_numbers
     chunks = [len_track_numbers[i:i+40] for i in range(0, len(len_track_numbers), 40)]
     threads = []
     all_data = []
@@ -126,8 +128,16 @@ def track_shipments():
     if file_path:
         try:
             df = pd.read_excel(file_path)
-            all_data_df = pd.DataFrame(all_data, columns=['Tracking Number', 'Final Status At', 'Delivery Status', 'Days In Transit', 'In Transit At'])
-            updated_df = pd.concat([df, all_data_df], ignore_index=True)
+            all_data_df = pd.DataFrame(all_data, columns=['Tracking',' Status', 'In transit at','Final status at',  'Time to final status at' ])
+            # all_data_df['In transit at'] = pd.to_datetime(all_data_df['In transit at'])
+            
+            all_data_df['In transit at'] = pd.to_datetime(all_data_df['In transit at'], format='%Y-%m-%d %H:%M', errors='coerce')
+            df['Processed at'] = pd.to_datetime(df['Processed at'], format='%Y-%m-%d %H:%M', errors='coerce')
+
+            all_data_df['Time in transit at '] = (all_data_df['In transit at'] - df['Processed at']).dt.total_seconds() / 3600
+            all_data_df['Refund'] = all_data_df['Time in transit at '] > 48
+
+            updated_df = pd.merge(df, all_data_df, on='Tracking', how='left')
             updated_df.to_excel(file_path, index=False)
             print("Thông tin vận đơn đã được ghi vào file tracking_info.xlsx")
         except Exception as e:
@@ -142,4 +152,5 @@ def download_results(file_id):
     return send_file(output_file_path, as_attachment=True)
 
 if __name__ == '__main__':
-     app.run(host='0.0.0.0', port=5000, debug=True)
+    #  app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True)
