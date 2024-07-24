@@ -1,16 +1,19 @@
 from flask import Flask, jsonify, render_template, request, send_file
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
 import pandas as pd
+
 from bs4 import BeautifulSoup
 import threading
 import uuid
 import os
 import time
-
+import sys
 app = Flask(__name__)
 lock = threading.Lock()
 
@@ -20,6 +23,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
+
 
 def process_tracking_numbers(tracking_numbers, all_data, results):
     service = Service('chromedriver.exe')
@@ -38,7 +42,12 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
         search_box.send_keys(tracking_numbers_str)
         track_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.batch_track_search-area__9BaOs')))
         track_button.click()
-        
+        try:
+            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CLASS_NAME, 'captcha-container')))
+            results.append({"status": "error", "message": "CAPTCHA detected. Please solve it manually."})
+            return
+        except Exception as e:
+            pass
         try:
             time.sleep(5)
             close_button = WebDriverWait(driver, 2).until(
@@ -71,7 +80,7 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
                 delivery_status = status_parts[0].strip()
                 days_in_transit = status_parts[1].replace(')', '').strip() if len(status_parts) > 1 else 'N/A'
 
-                data.append([tracking_number,delivery_status,last_second_time_content, final_status_at,  days_in_transit])
+                data.append([tracking_number, delivery_status, last_second_time_content, final_status_at, days_in_transit])
             except Exception as e:
                 print(f"Error processing row: {str(e)}")
 
@@ -84,6 +93,7 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
 @app.route('/')
 def index():
     return render_template('index.html')
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     file = request.files.get('file')
@@ -94,28 +104,31 @@ def upload_file():
         file.save(file_path)
         return jsonify({"status": "success", "file_id": file_id})
     else:
-        return jsonify({"status": "error", "message": "No file or tracking numbers provided"})
-    
+        return jsonify({"status": "error", "message": "No file uploaded"})
+
 @app.route('/track', methods=['POST'])
 def track_shipments():
     file_id = request.form.get('file_id')
+    start_row = int(request.form.get('start_row', 0))
+    end_row = int(request.form.get('end_row', None))
 
     if file_id:
         file_path = os.path.join(UPLOAD_FOLDER, file_id + '.xlsx')
         df = pd.read_excel(file_path)
-        tracking_numbers = df['Tracking'].tolist()
+        
+        if end_row is None or end_row > len(df):
+            end_row = len(df)
 
+        tracking_numbers = df['Tracking'].iloc[start_row:end_row].tolist()
     else:
-        file_path = None
+        return jsonify({'status': 'error', 'message': 'File ID not provided'})
 
-    # len_track_numbers = tracking_numbers.strip().split('\n')
-    len_track_numbers = tracking_numbers
-    chunks = [len_track_numbers[i:i+40] for i in range(0, len(len_track_numbers), 40)]
+    # Phân chia danh sách tracking numbers thành các phần nhỏ hơn
+    chunks = [tracking_numbers[i:i+40] for i in range(0, len(tracking_numbers), 40)]
     threads = []
     all_data = []
     results = []
     
-
     for chunk in chunks:
         thread = threading.Thread(target=process_tracking_numbers, args=(chunk, all_data, results))
         thread.start()
@@ -124,22 +137,17 @@ def track_shipments():
     for thread in threads:
         thread.join()
 
-
     if file_path:
         try:
-            df = pd.read_excel(file_path)
             all_data_df = pd.DataFrame(all_data, columns=['Tracking',' Status', 'In transit at','Final status at',  'Time to final status at' ])
-            # all_data_df['In transit at'] = pd.to_datetime(all_data_df['In transit at'])
-            
             all_data_df['In transit at'] = pd.to_datetime(all_data_df['In transit at'], format='%Y-%m-%d %H:%M', errors='coerce')
             df['Processed at'] = pd.to_datetime(df['Processed at'], format='%Y-%m-%d %H:%M', errors='coerce')
-
-            all_data_df['Time in transit at '] = (all_data_df['In transit at'] - df['Processed at']).dt.total_seconds() / 3600
-            all_data_df['Refund'] = all_data_df['Time in transit at '] > 48
+            all_data_df['Time in transit at'] = (all_data_df['In transit at'] - df['Processed at']).dt.total_seconds() / 3600
+            all_data_df['Refund'] = all_data_df['Time in transit at'] > 48
 
             updated_df = pd.merge(df, all_data_df, on='Tracking', how='left')
             updated_df.to_excel(file_path, index=False)
-            print("Thông tin vận đơn đã được ghi vào file tracking_info.xlsx")
+            print("Tracking information has been saved to file")
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)})
 
@@ -147,10 +155,11 @@ def track_shipments():
 
 @app.route('/download/<file_id>')
 def download_results(file_id):
-    output_file_name = file_id +'.xlsx'
+    output_file_name = file_id + '.xlsx'
     output_file_path = os.path.join(app.config['UPLOAD_FOLDER'], output_file_name)
-    return send_file(output_file_path, as_attachment=True)
+    if os.path.exists(output_file_path):
+        return send_file(output_file_path, as_attachment=True)
+    return "File not found", 404
 
 if __name__ == '__main__':
-    #  app.run(host='0.0.0.0', port=5000, debug=True)
     app.run(debug=True)

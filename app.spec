@@ -3,9 +3,10 @@
 
 a = Analysis(
     ['app.py'],
-    pathex=[],
-    binaries=[],
-    datas=[('templates', 'templates'), ('static', 'static')],
+    pathex=['.'],
+    binaries=[('C:/Users/ngoqu/py-ebay/chromedriver.exe', '.')],
+    datas=[('templates', 'templates'), 
+    ('static', 'static'),('uploads', 'uploads'), ('results', 'results')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
