@@ -4,18 +4,21 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
-import pandas as pd
-
 from bs4 import BeautifulSoup
+import pandas as pd
 import threading
 import uuid
 import os
 import time
+from PIL import Image
+import io
+import requests
+import logging
+from flask_cors import CORS
 
 app = Flask(__name__)
 lock = threading.Lock()
-
+CORS(app)
 UPLOAD_FOLDER = 'uploads'
 RESULTS_FOLDER = 'results'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -23,45 +26,130 @@ app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
+# Bảo mật API_KEY
+API_KEY = os.getenv('API_KEY')
+
+# Cấu hình logging
+logging.basicConfig(level=logging.INFO)
+
+def solve_captcha(image_path):
+    upload_url = 'http://2captcha.com/in.php'
+    params = {
+        'key': API_KEY,
+        'method': 'post',
+        'json': 1
+    }
+
+    with open(image_path, 'rb') as image_file:
+        files = {'file': image_file}
+        response = requests.post(upload_url, params=params, files=files)
+        result = response.json()
+
+    if result.get('status') == 1:
+        captcha_id = result.get('request')
+        return captcha_id
+    else:
+        logging.error('Failed to upload CAPTCHA image.')
+        return None
+
+def get_captcha_solution(captcha_id):
+    """Nhận giải pháp CAPTCHA từ dịch vụ 2Captcha."""
+    result_url = 'http://2captcha.com/res.php'
+    params = {
+        'key': API_KEY,
+        'action': 'get',
+        'id': captcha_id,
+        'json': 1
+    }
+
+    while True:
+        response = requests.get(result_url, params=params)
+        result = response.json()
+
+        if result.get('status') == 1:
+            return result.get('request')
+        elif result.get('request') == 'CAPCHA_NOT_READY':
+            time.sleep(2)  
+        else:
+            logging.error('Failed to get CAPTCHA solution.')
+            return None
+
+def handle_captcha(driver):
+    """Xử lý CAPTCHA nếu nó xuất hiện trên trang web."""
+    screenshot = driver.get_screenshot_as_png()
+    screenshot_image = Image.open(io.BytesIO(screenshot))
+    captcha_element = driver.find_element(By.ID, 'var-img')
+    location = captcha_element.location
+    left = location['x']+100
+    top = location['y']+200
+    right = left +400
+    bottom = top+300
+    captcha_image = screenshot_image.crop((left, top, right, bottom))
+    captcha_image_filename = str(uuid.uuid4()) + '.png'
+    print('anh la',captcha_image_filename)
+    captcha_image_path = os.path.join(app.config['UPLOAD_FOLDER'], captcha_image_filename)
+    captcha_image.save(captcha_image_path)
+    captcha_id = solve_captcha(captcha_image_path)
+
+    if captcha_id:
+        captcha_solution = get_captcha_solution(captcha_id)
+        if captcha_solution:
+            captcha_input = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'ver-code-input')))
+            submit_button =  WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'btn-submit')))
+            captcha_input.send_keys(captcha_solution)
+            
+            submit_button.click()
+            return True
+        else:
+            logging.error("Failed to get CAPTCHA solution.")
+    else:
+        logging.error("Failed to solve CAPTCHA.")
+    return False
 
 def process_tracking_numbers(tracking_numbers, all_data, results):
+    """Xử lý số theo dõi và thu thập thông tin vận chuyển."""
     service = Service('chromedriver.exe')
     options = webdriver.ChromeOptions()
     options.add_argument('--ignore-ssl-errors=yes')
     options.add_argument('--ignore-certificate-errors')
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.get('https://www.17track.net/en')
 
     try:
-        search_box = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, 'auto-size-textarea')))
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get('https://www.17track.net/en')
 
-        tracking_numbers = [str(num) for num in tracking_numbers if pd.notna(num)]
-        tracking_numbers_str = ','.join(tracking_numbers)
-        
+        search_box = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, 'auto-size-textarea')))
+        tracking_numbers_str = ','.join(str(num) for num in tracking_numbers if pd.notna(num))
         search_box.send_keys(tracking_numbers_str)
         track_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.batch_track_search-area__9BaOs')))
         track_button.click()
-        
-        try:
-            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CLASS_NAME, 'captcha-container')))
-            results.append({"status": "error", "message": "CAPTCHA detected. Please solve it manually."})
-            return
-        except Exception as e:
-            pass
 
         try:
-            time.sleep(5)
-            close_button = WebDriverWait(driver, 2).until(
-                EC.presence_of_element_located((By.CLASS_NAME, 'introjs-skipbutton'))
-            )
+            close_button = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CLASS_NAME, 'introjs-skipbutton')))
             close_button.click()
         except:
             pass
-        
+
+        try:
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'ver-code')))
+            if handle_captcha(driver):
+                logging.info("CAPTCHA handled successfully.")
+            else:
+                results.append({"status": "error", "message": "Failed to solve CAPTCHA."})
+                return
+        except Exception as e:
+            logging.warning(f"Captcha not found or other error: {str(e)}")
+
+        try:
+            close_button = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CLASS_NAME, 'introjs-skipbutton')))
+            close_button.click()
+        except:
+            pass
+
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CLASS_NAME, 'tracklist-item')))
-        
         data = []
+
         rows = driver.find_elements(By.CLASS_NAME, 'tracklist-item')
+
         for row in rows:
             try:
                 tracking_number = row.find_element(By.CLASS_NAME, 'no-container span').text.strip()
@@ -73,21 +161,20 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
                 soup = BeautifulSoup(html_content, 'html.parser')
                 time_tags = soup.select('.trn-block dd time')
 
-                if len(time_tags) > 1:
-                    last_second_time_content = time_tags[-2].get_text()
-                else:
-                    last_second_time_content = 'N/A'
+                last_second_time_content = time_tags[-2].get_text() if len(time_tags) > 1 else 'N/A'
                 status_parts = status.split('(')
                 delivery_status = status_parts[0].strip()
                 days_in_transit = status_parts[1].replace(')', '').strip() if len(status_parts) > 1 else 'N/A'
 
                 data.append([tracking_number, delivery_status, last_second_time_content, final_status_at, days_in_transit])
             except Exception as e:
-                print(f"Error processing row: {str(e)}")
+                logging.error(f"Error processing row: {str(e)}")
 
         with lock:
             all_data.extend(data)
             results.append({"status": "success", "message": "Tracking completed"})
+    except Exception as e:
+        logging.error(f"Error processing tracking numbers: {str(e)}")
     finally:
         driver.quit()
 
@@ -101,7 +188,7 @@ def upload_file():
 
     if file:
         file_id = str(uuid.uuid4())
-        file_path = os.path.join(UPLOAD_FOLDER, file_id + '.xlsx')
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id + '.xlsx')
         file.save(file_path)
         return jsonify({"status": "success", "file_id": file_id})
     else:
@@ -114,9 +201,9 @@ def track_shipments():
     end_row = int(request.form.get('end_row', None))
 
     if file_id:
-        file_path = os.path.join(UPLOAD_FOLDER, file_id + '.xlsx')
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id + '.xlsx')
         df = pd.read_excel(file_path)
-        
+
         if end_row is None or end_row > len(df):
             end_row = len(df)
 
@@ -145,11 +232,8 @@ def track_shipments():
             df['Processed at'] = pd.to_datetime(df['Processed at'], format='%Y-%m-%d %H:%M', errors='coerce')
 
             merged_df = pd.merge(all_data_df, df[['Tracking', 'Processed at']], on='Tracking', how='left')
-            merged_df['Time in transit at'] = (merged_df['In transit at'] - merged_df['Processed at']).dt.total_seconds() / 3600 +12
+            merged_df['Time in transit at'] = (merged_df['In transit at'] - merged_df['Processed at']).dt.total_seconds() / 3600 + 12
             merged_df['Refund'] = merged_df['Time in transit at'] > 48
-
-            df['In transit at'] = pd.to_datetime(df['In transit at'], errors='coerce')
-            df['Final status at'] = pd.to_datetime(df['Final status at'], errors='coerce')
 
             for index, row in merged_df.iterrows():
                 tracking_number = row['Tracking']
@@ -162,12 +246,11 @@ def track_shipments():
                     df.loc[df['Tracking'] == tracking_number, 'Refund'] = row['Refund']
 
             df.to_excel(file_path, index=False)
-            print("Tracking information has been saved to file")
+            logging.info("Tracking information has been saved to file")
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)})
 
     return jsonify({"status": "success"})
-
 
 @app.route('/download/<file_id>')
 def download_results(file_id):
@@ -178,4 +261,4 @@ def download_results(file_id):
     return "File not found", 404
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0',port=2345)
