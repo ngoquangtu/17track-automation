@@ -33,7 +33,7 @@ API_KEY = os.getenv('API_KEY')
 logging.basicConfig(level=logging.INFO)
 
 def solve_captcha(image_path):
-    upload_url = 'http://2captcha.com/in.php'
+    upload_url = 'https://2captcha.com/in.php'
     params = {
         'key': API_KEY,
         'method': 'post',
@@ -54,7 +54,7 @@ def solve_captcha(image_path):
 
 def get_captcha_solution(captcha_id):
     """Nhận giải pháp CAPTCHA từ dịch vụ 2Captcha."""
-    result_url = 'http://2captcha.com/res.php'
+    result_url = 'https://2captcha.com/res.php'
     params = {
         'key': API_KEY,
         'action': 'get',
@@ -80,13 +80,13 @@ def handle_captcha(driver):
     screenshot_image = Image.open(io.BytesIO(screenshot))
     captcha_element = driver.find_element(By.ID, 'var-img')
     location = captcha_element.location
-    left = location['x']+100
-    top = location['y']+200
-    right = left +400
-    bottom = top+300
+    left = location['x'] + 100
+    top = location['y'] + 200
+    right = left + 400
+    bottom = top + 300
     captcha_image = screenshot_image.crop((left, top, right, bottom))
     captcha_image_filename = str(uuid.uuid4()) + '.png'
-    print('anh la',captcha_image_filename)
+    print('anh la', captcha_image_filename)
     captcha_image_path = os.path.join(app.config['UPLOAD_FOLDER'], captcha_image_filename)
     captcha_image.save(captcha_image_path)
     captcha_id = solve_captcha(captcha_image_path)
@@ -95,9 +95,8 @@ def handle_captcha(driver):
         captcha_solution = get_captcha_solution(captcha_id)
         if captcha_solution:
             captcha_input = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'ver-code-input')))
-            submit_button =  WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'btn-submit')))
+            submit_button = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'btn-submit')))
             captcha_input.send_keys(captcha_solution)
-            
             submit_button.click()
             return True
         else:
@@ -108,10 +107,17 @@ def handle_captcha(driver):
 
 def process_tracking_numbers(tracking_numbers, all_data, results):
     """Xử lý số theo dõi và thu thập thông tin vận chuyển."""
-    service = Service('chromedriver.exe')
+
+    service = Service('usr/local/bin/chromedriver.exe')
     options = webdriver.ChromeOptions()
+    # options.add_argument('--headless')
+    # options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--ignore-ssl-errors=yes')
     options.add_argument('--ignore-certificate-errors')
+
+    options.add_argument('--ignore-certificate-errors-spki-list')
+    options.add_argument('--disable-features=EnableTLS13EarlyData')
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
@@ -128,7 +134,15 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
             close_button.click()
         except:
             pass
-
+        # Thêm phần kiểm tra Cloudflare
+        try:
+            cloudflare_challenge = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'iframe[src*="challenges.cloudflare.com"]')))
+            logging.info("Cloudflare challenge detected.")
+            driver.switch_to.frame(cloudflare_challenge)
+            # Thực hiện các bước cần thiết để vượt qua thử thách Cloudflare ở đây, nếu có
+            driver.switch_to.default_content()
+        except:
+            pass
         try:
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'ver-code')))
             if handle_captcha(driver):
@@ -175,9 +189,9 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
             results.append({"status": "success", "message": "Tracking completed"})
     except Exception as e:
         logging.error(f"Error processing tracking numbers: {str(e)}")
+        results.append({"status": "error", "message": str(e)})
     finally:
         driver.quit()
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -224,6 +238,9 @@ def track_shipments():
     for thread in threads:
         thread.join()
 
+    if any(result["status"] == "error" for result in results):
+        return jsonify({"status": "error", "message": "Failed to solve CAPTCHA for some tracking numbers."})
+
     if file_path:
         try:
             all_data_df = pd.DataFrame(all_data, columns=['Tracking', 'Status', 'In transit at', 'Final status at', 'Time to final status at'])
@@ -261,4 +278,4 @@ def download_results(file_id):
     return "File not found", 404
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0',port=2345)
+    app.run(debug=True, host='0.0.0.0', port=2345)
