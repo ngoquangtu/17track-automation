@@ -112,6 +112,7 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
 
     driver = webdriver.Chrome()
     ChromeDriverLocation = driver.service.path
+    print(ChromeDriverLocation)
     service = Service(ChromeDriverLocation)
     options = webdriver.ChromeOptions()
     # options.add_argument('--headless')
