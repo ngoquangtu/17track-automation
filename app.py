@@ -5,6 +5,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import threading
 import uuid
@@ -108,7 +110,7 @@ def handle_captcha(driver):
 def process_tracking_numbers(tracking_numbers, all_data, results):
     """Xử lý số theo dõi và thu thập thông tin vận chuyển."""
 
-    service = Service('usr/local/bin/chromedriver.exe')
+    service = Service('./usr/local/bin/chromedriver.exe')
     options = webdriver.ChromeOptions()
     # options.add_argument('--headless')
     # options.add_argument('--no-sandbox')
@@ -118,7 +120,7 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
 
     options.add_argument('--ignore-certificate-errors-spki-list')
     options.add_argument('--disable-features=EnableTLS13EarlyData')
-
+    driver=None
     try:
         driver = webdriver.Chrome(service=service, options=options)
         driver.get('https://www.17track.net/en')
