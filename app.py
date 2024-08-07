@@ -110,7 +110,9 @@ def handle_captcha(driver):
 def process_tracking_numbers(tracking_numbers, all_data, results):
     """Xử lý số theo dõi và thu thập thông tin vận chuyển."""
 
-    service = Service('./usr/local/bin/chromedriver.exe')
+    driver = webdriver.Chrome()
+    ChromeDriverLocation = driver.service.path
+    service = Service(ChromeDriverLocation)
     options = webdriver.ChromeOptions()
     # options.add_argument('--headless')
     # options.add_argument('--no-sandbox')
@@ -193,7 +195,10 @@ def process_tracking_numbers(tracking_numbers, all_data, results):
         logging.error(f"Error processing tracking numbers: {str(e)}")
         results.append({"status": "error", "message": str(e)})
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
+        else:
+            print('khong co driver')
 @app.route('/')
 def index():
     return render_template('index.html')
